@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import dotenv from 'dotenv';
+import { spawn } from 'child_process';
 import { WebcastPushConnection } from 'tiktok-live-connector';
 
 dotenv.config();
@@ -15,9 +16,53 @@ const io = new Server(server, {
     }
 });
 
-app.use(express.static('public'));
+const DEPLOY_TOKEN = process.env.DEPLOY_TOKEN || '';
+const DEPLOY_SCRIPT = '/usr/local/bin/uler-deploy.sh';
 
 const connections = new Map();
+
+app.use(express.static('public'));
+
+
+// =========================
+// DEPLOY ENDPOINT
+// =========================
+
+app.get('/deploy/:token', (req, res) => {
+
+    if (!DEPLOY_TOKEN || req.params.token !== DEPLOY_TOKEN) {
+        return res.status(403).send('Forbidden');
+    }
+
+    const child = spawn('/bin/bash', [DEPLOY_SCRIPT], {
+        detached: true,
+        stdio: 'ignore'
+    });
+
+    child.unref();
+
+    return res.status(202).send('Deploy started');
+});
+
+
+// =========================
+// STATUS
+// =========================
+
+app.get('/status', (req, res) => {
+
+    res.json({
+        success: true,
+        totalConnections: connections.size,
+        rooms: [...connections.keys()]
+    });
+
+});
+
+
+// =========================
+// CONNECT TIKTOK LIVE
+// =========================
 
 app.get('/connect', async (req, res) => {
 
@@ -26,25 +71,27 @@ app.get('/connect', async (req, res) => {
     if (!username) {
         return res.status(400).json({
             success: false,
-            message: 'Parameter user wajib diisi'
+            message: 'user parameter required'
         });
     }
 
     try {
 
         if (connections.has(username)) {
+
             return res.json({
                 success: true,
-                message: 'Sudah terkoneksi',
+                message: 'already connected',
                 username
             });
+
         }
+
+        console.log(`Connecting ${username}`);
 
         const tiktokLive = new WebcastPushConnection(username, {
             processInitialData: true,
             enableExtendedGiftInfo: true,
-            requestPollingIntervalMs: 2000,
-
             signApiKey: process.env.EULER_API_KEY
         });
 
@@ -95,7 +142,7 @@ app.get('/connect', async (req, res) => {
 
         tiktokLive.on('member', data => {
 
-            io.emit('join', {
+            io.emit('member', {
                 username,
                 nickname: data.nickname
             });
@@ -115,7 +162,7 @@ app.get('/connect', async (req, res) => {
 
         tiktokLive.on('streamEnd', () => {
 
-            console.log(`LIVE ENDED => ${username}`);
+            console.log(`STREAM ENDED => ${username}`);
 
             connections.delete(username);
 
@@ -128,7 +175,7 @@ app.get('/connect', async (req, res) => {
         res.json({
             success: true,
             username,
-            message: 'Berhasil connect'
+            message: 'connected'
         });
 
     } catch (err) {
@@ -144,29 +191,36 @@ app.get('/connect', async (req, res) => {
 
 });
 
+
+// =========================
+// DISCONNECT
+// =========================
+
 app.get('/disconnect', async (req, res) => {
 
     const username = req.query.user;
 
     if (!connections.has(username)) {
+
         return res.json({
             success: false,
-            message: 'Tidak ditemukan'
+            message: 'not connected'
         });
+
     }
 
     try {
 
         const connection = connections.get(username);
 
-        connection.disconnect();
+        await connection.disconnect();
 
         connections.delete(username);
 
         res.json({
             success: true,
             username,
-            message: 'Disconnected'
+            message: 'disconnected'
         });
 
     } catch (err) {
@@ -180,15 +234,10 @@ app.get('/disconnect', async (req, res) => {
 
 });
 
-app.get('/status', (req, res) => {
 
-    res.json({
-        success: true,
-        totalConnections: connections.size,
-        rooms: [...connections.keys()]
-    });
-
-});
+// =========================
+// SOCKET.IO
+// =========================
 
 io.on('connection', socket => {
 
@@ -204,8 +253,15 @@ io.on('connection', socket => {
 
 });
 
+
+// =========================
+// START SERVER
+// =========================
+
 server.listen(process.env.PORT || 3001, () => {
 
-    console.log(`SERVER RUNNING ON PORT ${process.env.PORT || 3001}`);
+    console.log(
+        `SERVER RUNNING PORT ${process.env.PORT || 3001}`
+    );
 
 });
