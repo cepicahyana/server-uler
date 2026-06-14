@@ -15,6 +15,6 @@ io.on('connection', (socket) => {
     console.log('Browser connected');
 });
 
-server.listen(process.env.PORT || 3000, () => {
+server.listen(process.env.PORT || 3001, () => {
     console.log('Server running');
 });
